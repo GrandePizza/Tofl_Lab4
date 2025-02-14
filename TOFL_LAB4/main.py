@@ -1,6 +1,7 @@
 class RegexParserError(Exception):
     pass
 
+
 class Token:
     def __init__(self, ttype, value=None):
         self.ttype = ttype
@@ -8,6 +9,7 @@ class Token:
 
     def __repr__(self):
         return f"Token({self.ttype}, {self.value})"
+
 
 class Lexer:
     def __init__(self, text):
@@ -72,12 +74,14 @@ class GroupNode:
     def __repr__(self):
         return f"GroupNode({self.group_id}, {self.node})"
 
+
 class NonCapGroupNode:
     def __init__(self, node):
         self.node = node
 
     def __repr__(self):
         return f"NonCapGroupNode({self.node})"
+
 
 class LookaheadNode:
     def __init__(self, node):
@@ -86,12 +90,14 @@ class LookaheadNode:
     def __repr__(self):
         return f"LookaheadNode({self.node})"
 
+
 class ConcatNode:
     def __init__(self, nodes):
         self.nodes = nodes
 
     def __repr__(self):
         return f"ConcatNode({self.nodes})"
+
 
 class AltNode:
     def __init__(self, branches):
@@ -100,12 +106,14 @@ class AltNode:
     def __repr__(self):
         return f"AltNode({self.branches})"
 
+
 class StarNode:
     def __init__(self, node):
         self.node = node
 
     def __repr__(self):
         return f"StarNode({self.node})"
+
 
 class CharNode:
     def __init__(self, ch):
@@ -114,12 +122,14 @@ class CharNode:
     def __repr__(self):
         return f"CharNode('{self.ch}')"
 
+
 class ExprRefNode:
     def __init__(self, ref_id):
         self.ref_id = ref_id
 
     def __repr__(self):
         return f"ExprRefNode({self.ref_id})"
+
 
 class Parser:
     def __init__(self, tokens):
@@ -148,8 +158,45 @@ class Parser:
         node = self.parse_alternation()
         if self.current_token() is not None:
             raise RegexParserError()
-        self.check_references(node, defined_groups=set())
+
+        all_groups = self.collect_all_groups(node, set())
+
+        self.check_references(node, all_groups)
+
         return node
+
+    def collect_all_groups(self, node, defined_groups):
+        if isinstance(node, GroupNode):
+            defined_groups.add(node.group_id)
+            self.collect_all_groups(node.node, defined_groups)
+            return defined_groups
+
+        if isinstance(node, NonCapGroupNode):
+            return self.collect_all_groups(node.node, defined_groups)
+
+        if isinstance(node, LookaheadNode):
+            return self.collect_all_groups(node.node, defined_groups)
+
+        if isinstance(node, StarNode):
+            return self.collect_all_groups(node.node, defined_groups)
+
+        if isinstance(node, ConcatNode):
+            for child in node.nodes:
+                self.collect_all_groups(child, defined_groups)
+            return defined_groups
+
+        if isinstance(node, AltNode):
+            for branch in node.branches:
+                self.collect_all_groups(branch, defined_groups)
+            return defined_groups
+
+        if isinstance(node, CharNode):
+            return defined_groups
+
+        if isinstance(node, ExprRefNode):
+            return defined_groups
+
+        raise RegexParserError()
 
     def parse_alternation(self):
         # alternation: concatenation ('|' concatenation)*
@@ -225,30 +272,43 @@ class Parser:
         else:
             raise RegexParserError()
 
-    def check_references(self, node, defined_groups):
-        if isinstance(node, (CharNode, ExprRefNode)):
-            return defined_groups
+    def check_references(self, node, all_groups):
+        if isinstance(node, ExprRefNode):
+            if node.ref_id not in all_groups:
+                raise RegexParserError()
+            return
 
         if isinstance(node, GroupNode):
-            return self.check_references(node.node, defined_groups) | {node.group_id}
+            self.check_references(node.node, all_groups)
+            return
 
-        if isinstance(node, (NonCapGroupNode, StarNode)):
-            return self.check_references(node.node, defined_groups)
+        if isinstance(node, NonCapGroupNode):
+            self.check_references(node.node, all_groups)
+            return
 
         if isinstance(node, LookaheadNode):
             self.check_no_cap_and_lookahead(node.node, inside_lookahead=True)
-            return self.check_references(node.node, defined_groups)
+            self.check_references(node.node, all_groups)
+            return
+
+        if isinstance(node, StarNode):
+            self.check_references(node.node, all_groups)
+            return
 
         if isinstance(node, ConcatNode):
             for child in node.nodes:
-                defined_groups = self.check_references(child, defined_groups)
-            return defined_groups
+                self.check_references(child, all_groups)
+            return
 
         if isinstance(node, AltNode):
-            return set.union(*(self.check_references(branch, defined_groups) for branch in node.branches))
+            for branch in node.branches:
+                self.check_references(branch, all_groups)
+            return
+
+        if isinstance(node, CharNode):
+            return
 
         raise RegexParserError()
-
 
     def check_no_cap_and_lookahead(self, node, inside_lookahead):
 
@@ -384,6 +444,7 @@ def main():
 
     except RegexParserError as e:
         print("Ошибка", e)
+
 
 if __name__ == "__main__":
     main()
